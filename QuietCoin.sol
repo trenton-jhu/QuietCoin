@@ -66,15 +66,29 @@ contract QuietCoin {
         msg.sender.transfer(amount);
     }
     
+    // User deposity usd, which will be kept at stable price
     function deposit(uint n_usd) public payable returns (address v) {
         require(volunteer_addr.length > 0, "No volunteers present");
-        require(msg.value > n_usd * bid_price * usd_to_wei / 100, "Insufficient ether to back deposit USD amount");
+        uint wei_needed = n_usd * bid_price * usd_to_wei / 100;
+        require(msg.value > wei_needed, "Insufficient ether to back deposit USD amount");
+
+        // If previously assinged volunteer
+        address addr = users[msg.sender].assignee;
+        if (addr != address(0)) {
+            if (volunteers[addr].amount - volunteers[addr].locked_amount >= collateral_rate * wei_needed) {
+                volunteers[addr].locked_amount += collateral_rate * wei_needed;
+                users[msg.sender].balance += n_usd;
+                return addr;
+            } else {
+                revert("Your assigned volunteer cannot back more amount");
+            }
+        }
         
         // Find and assign volunteer
         for (uint i = 0; i < volunteer_addr.length; i++) {
-            address addr = volunteer_addr[i];
-            if (volunteers[addr].amount - volunteers[addr].locked_amount >= collateral_rate * msg.value) {
-                volunteers[addr].locked_amount += collateral_rate * msg.value;
+            address v_addr = volunteer_addr[i];
+            if (volunteers[v_addr].amount - volunteers[v_addr].locked_amount >= collateral_rate * wei_needed) {
+                volunteers[v_addr].locked_amount += collateral_rate * wei_needed;
                 users[msg.sender].balance += n_usd;
                 users[msg.sender].assignee = addr;
                 return addr;
@@ -82,12 +96,13 @@ contract QuietCoin {
         }
 
         // Transfer change back to user
-        msg.sender.transfer(msg.value - n_usd * bid_price * usd_to_wei / 100);
+        msg.sender.transfer(msg.value - wei_needed);
         
         // No volunteer found
-        revert();
+        revert("No volunteer found");
     }
 
+    // User request a withdrawal for the usd they deposited
     function requestWithdrawal(uint n_usd) public returns (uint order_id) {
         require(users[msg.sender].balance >= n_usd, "Insufficient USD amount to withdraw");
         orders.push(Order({
@@ -99,6 +114,7 @@ contract QuietCoin {
         return orders.length - 1;
     }
 
+    // Volunteer fulfill a withdrawl request identified by order_id made by the user 
     function fulfillWithdrawal(uint order_id) public payable {
         require(order_id < orders.length, "No such cash out order exists");
         require(orders[order_id].volunteer == msg.sender, "Wrong user to cash out");
@@ -111,6 +127,7 @@ contract QuietCoin {
         delete orders[order_id];
     }
 
+    // Vote on the conversion rate
     function vote(uint usd_to_wei_vote) public {
         uint prev_vote = votes[vote_index];
         votes[vote_index] = usd_to_wei_vote;
